@@ -1,6 +1,8 @@
 import os
 import re
 import logging
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import genai
 from youtube_transcript_api import YouTubeTranscriptApi
 from telegram import Update
@@ -14,6 +16,19 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+# Web Service အတွက် Dummy Server ဖွင့်ပေးခြင်း (Render Free ရစေရန်)
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
 
 
 def extract_video_id(url: str):
@@ -101,9 +116,13 @@ if __name__ == "__main__":
     if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
         raise ValueError("TELEGRAM_BOT_TOKEN နှင့် GEMINI_API_KEY လိုအပ်ပါသည်။")
 
+    # Background Dummy Web Server စတင်ခြင်း
+    web_thread = Thread(target=run_dummy_server, daemon=True)
+    web_thread.start()
+
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
     app.run_polling()
-  
+    
