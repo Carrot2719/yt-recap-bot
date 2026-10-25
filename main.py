@@ -59,7 +59,7 @@ def generate_burmese_recap(youtube_url: str):
     
     # Google Search Tool ပါဝင်သောကြောင့် ဗီဒီယိုအချက်အလက်များကို အလိုအလျောက် ရှာဖွေဖတ်ရှုပေးနိုင်သည်
     response = ai_client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-1.5-flash",
         contents=prompt,
         config={"tools": [{"google_search": {}}]}
     )
