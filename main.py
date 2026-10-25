@@ -4,7 +4,8 @@ import asyncio
 import logging
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import google.generativeai as genai
+from google import genai
+from youtube_transcript_api import YouTubeTranscriptApi
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
@@ -15,8 +16,7 @@ logging.basicConfig(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Gemini API Setting
-genai.configure(api_key=GEMINI_API_KEY)
+ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -32,20 +32,35 @@ def run_dummy_server():
     server.serve_forever()
 
 
-def extract_clean_youtube_url(text: str):
+def extract_video_id(url: str):
     pattern = r"(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})"
-    match = re.search(pattern, text)
-    if match:
-        video_id = match.group(1)
-        return f"https://www.youtube.com/watch?v={video_id}"
+    match = re.search(pattern, url)
+    return match.group(1) if match else None
+
+
+def get_youtube_transcript(video_id: str):
+    """ဗီဒီယိုတွင်ပါသော မည်သည့်ဘာသာစကား Transcript ကိုမဆို အကုန်လုံးဆွဲယူသည်"""
+    try:
+        transcript_list_obj = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript = None
+        
+        # ရနိုင်သည့် မည်သည့် Transcript မဆို ရှာယူခြင်း
+        for t in transcript_list_obj:
+            transcript = t
+            break
+
+        if transcript:
+            fetched_data = transcript.fetch()
+            return " ".join([item["text"] for item in fetched_data])
+    except Exception as e:
+        logging.error(f"Transcript Error: {e}")
+        return None
     return None
 
 
-def generate_recap_from_video(youtube_url: str):
+def generate_burmese_recap(transcript_text: str):
     prompt = f"""
-    အောက်ပါ YouTube ဗီဒီယိုလင့်ခ်၏ အကြောင်းအရာကို အခြေခံပြီး မြန်မာဘာသာစကားဖြင့် ပြည့်စုံသပ်ရပ်သော Recap (အနှစ်ချုပ်) တစ်ခု ဖန်တီးပေးပါ။
-
-    YouTube URL: {youtube_url}
+    အောက်ပါ YouTube transcript စာသားများကို အခြေခံပြီး မြန်မာဘာသာစကားဖြင့် သပ်ရပ်ရှင်းလင်းသော Recap/Summary တစ်ခု ဖန်တီးပေးပါ။ (မူရင်းစာသားသည် မည်သည့်ဘာသာစကားဖြစ်စေ မြန်မာလို အနှစ်ချုပ် ပြန်ထုတ်ပေးပါ)
 
     ဖွဲ့စည်းပုံ-
     📌 **ဗီဒီယို၏ အဓိကရည်ရွယ်ချက် (Overview)**
@@ -56,9 +71,16 @@ def generate_recap_from_video(youtube_url: str):
 
     🎯 **အဆုံးသတ် သုံးသပ်ချက် (Conclusion)**
     - အဆုံးသတ် ကောက်ချက် သို့မဟုတ် ရရှိသော သင်ခန်းစာ
+
+    Transcript:
+    {transcript_text[:25000]}
     """
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    response = model.generate_content(prompt)
+    
+    # gemini-2.5-flash မော်ဒယ်အသစ်ဖြင့် အနှစ်ချုပ်ခိုင်းခြင်း
+    response = ai_client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
     return response.text
 
 
@@ -73,16 +95,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
-    clean_url = extract_clean_youtube_url(user_message)
+    video_id = extract_video_id(user_message)
 
-    if not clean_url:
+    if not video_id:
         await update.message.reply_text("ကျေးဇူးပြု၍ မှန်ကန်သော YouTube Video Link တစ်ခု ပို့ပေးပါ။")
         return
 
-    status_message = await update.message.reply_text("⏳ Gemini AI က ဗီဒီယိုကို လေ့လာပြီး မြန်မာလို Recap ရေးသားနေပါသည်... ခေတ္တစောင့်ပေးပါ။")
+    status_message = await update.message.reply_text("⏳ ဗီဒီယိုအချက်အလက်များကို ရယူနေပါသည်... ခေတ္တစောင့်ပေးပါ။")
+
+    transcript_text = get_youtube_transcript(video_id)
+
+    if not transcript_text:
+        await status_message.edit_text(
+            "⚠️ ဒီဗီဒီယိုအတွက် Subtitle/Transcript ရယူ၍ မရနိုင်ပါ (စာတန်းထိုး မပါဝင်ပါ သို့မဟုတ် ပိတ်ထားပါသည်)။"
+        )
+        return
+
+    await status_message.edit_text("✍️ Gemini AI က မြန်မာလို Recap ရေးသားနေပါသည်... ခေတ္တစောင့်ပေးပါ။")
 
     try:
-        recap_result = generate_recap_from_video(clean_url)
+        recap_result = generate_burmese_recap(transcript_text)
         await status_message.edit_text(recap_result)
     except Exception as e:
         logging.error(f"Error generating recap: {e}")
