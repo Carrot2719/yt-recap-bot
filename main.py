@@ -58,14 +58,14 @@ def generate_recap_from_video(youtube_url: str):
     - အဆုံးသတ် ကောက်ချက် သို့မဟုတ် ရရှိသော သင်ခန်းစာ
     """
     
-    # Gemini 2.5 Flash သည် YouTube URL ကို Part.from_uri ဖြင့် တိုက်ရိုက် ဖတ်ရှုနိုင်သည်
+    # YouTube URL ကို Video URI အဖြစ် တိုက်ရိုက်ထည့်သွင်းခြင်း
     video_part = types.Part.from_uri(
         file_uri=youtube_url,
         mime_type="video/*"
     )
 
     response = ai_client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-1.5-flash",
         contents=[video_part, prompt]
     )
     return response.text
@@ -80,43 +80,4 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(welcome_text)
 
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    clean_url = extract_clean_youtube_url(user_message)
-
-    if not clean_url:
-        await update.message.reply_text("ကျေးဇူးပြု၍ မှန်ကန်သော YouTube Video Link တစ်ခု ပို့ပေးပါ။")
-        return
-
-    status_message = await update.message.reply_text("⏳ Gemini AI က ဗီဒီယိုကို လေ့လာပြီး မြန်မာလို Recap ရေးသားနေပါသည်... ခေတ္တစောင့်ပေးပါ။")
-
-    try:
-        recap_result = generate_recap_from_video(clean_url)
-        await status_message.edit_text(recap_result)
-    except Exception as e:
-        logging.error(f"Error generating recap: {e}")
-        await status_message.edit_text(f"⚠️ Recap ထုတ်ယူရာတွင် အမှားဖြစ်ပေါ်ခဲ့သည်- {str(e)[:100]}")
-
-
-async def main():
-    if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
-        raise ValueError("TELEGRAM_BOT_TOKEN နှင့် GEMINI_API_KEY လိုအပ်ပါသည်။")
-
-    web_thread = Thread(target=run_dummy_server, daemon=True)
-    web_thread.start()
-
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-
-    async with app:
-        await app.start()
-        await app.updater.start_polling()
-        while True:
-            await asyncio.sleep(3600)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-    
-    
+async def
