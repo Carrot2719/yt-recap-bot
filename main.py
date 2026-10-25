@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import logging
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -18,7 +19,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 
-# Web Service အတွက် Dummy Server ဖွင့်ပေးခြင်း (Render Free ရစေရန်)
+# Web Service အခမဲ့ရစေရန် Dummy Web Server
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -112,17 +113,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_message.edit_text("⚠️ Recap ထုတ်ယူရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။ နောက်တစ်ကြိမ် ထပ်ကြိုးစားပေးပါ။")
 
 
-if __name__ == "__main__":
+async def main():
     if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
         raise ValueError("TELEGRAM_BOT_TOKEN နှင့် GEMINI_API_KEY လိုအပ်ပါသည်။")
 
-    # Background Dummy Web Server စတင်ခြင်း
+    # Dummy Web Server ကို Background Thread ဖြင့် run ခြင်း
     web_thread = Thread(target=run_dummy_server, daemon=True)
     web_thread.start()
 
+    # Telegram Bot တည်ဆောက်ခြင်း
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-    app.run_polling()
+    # Event Loop အတွင်း ပုံမှန် polling စနစ်ဖြင့် စတင်ခြင်း
+    async with app:
+        await app.start()
+        await app.updater.start_polling()
+        # Bot ကို အမြဲတစေ active ဖြစ်နေစေရန် စောင့်ဆိုင်းထားခြင်း
+        while True:
+            await asyncio.sleep(3600)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
     
