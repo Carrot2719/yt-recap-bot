@@ -15,11 +15,7 @@ logging.basicConfig(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# API Version v1 ကို တိုက်ရိုက် သတ်မှတ်ထားခြင်း
-ai_client = genai.Client(
-    api_key=GEMINI_API_KEY,
-    http_options={"api_version": "v1"}
-)
+ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -62,7 +58,7 @@ def generate_burmese_recap(youtube_url: str):
     """
     
     response = ai_client.models.generate_content(
-        model="gemini-1.5-flash",
+        model="gemini-2.5-flash-latest",
         contents=prompt
     )
     return response.text
