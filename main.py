@@ -5,7 +5,6 @@ import logging
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import genai
-from google.genai import types
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
@@ -19,12 +18,12 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 
-# Web Service အခမဲ့ ဆက်လက်လည်ပတ်စေရန် Dummy Server
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot is active!")
+
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -33,7 +32,6 @@ def run_dummy_server():
 
 
 def extract_clean_youtube_url(text: str):
-    """YouTube URL ထဲမှ 11-digit Video ID ကို ရှာဖွေပြီး standard link ပြန်ထုတ်ပေးသည်"""
     pattern = r"(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})"
     match = re.search(pattern, text)
     if match:
@@ -43,9 +41,10 @@ def extract_clean_youtube_url(text: str):
 
 
 def generate_recap_from_video(youtube_url: str):
-    """Gemini API သို့ YouTube Video ကို URI အဖြစ် တိုက်ရိုက်ပေးပို့၍ မြန်မာလို အနှစ်ချုပ်ခိုင်းခြင်း"""
-    prompt = """
-    ဤ YouTube ဗီဒီယို၏ အသံနှင့် အကြောင်းအရာ အပြည့်အစုံကို နားထောင်/လေ့လာပြီး မြန်မာဘာသာစကားဖြင့် ပြည့်စုံသပ်ရပ်သော Recap (အနှစ်ချုပ်) တစ်ခု ဖန်တီးပေးပါ။
+    prompt = f"""
+    အောက်ပါ YouTube ဗီဒီယိုလင့်ခ်၏ အကြောင်းအရာကို လေ့လာပြီး မြန်မာဘာသာစကားဖြင့် ပြည့်စုံသပ်ရပ်သော Recap (အနှစ်ချုပ်) တစ်ခု ဖန်တီးပေးပါ။
+
+    YouTube URL: {youtube_url}
 
     ဖွဲ့စည်းပုံ-
     📌 **ဗီဒီယို၏ အဓိကရည်ရွယ်ချက် (Overview)**
@@ -57,16 +56,9 @@ def generate_recap_from_video(youtube_url: str):
     🎯 **အဆုံးသတ် သုံးသပ်ချက် (Conclusion)**
     - အဆုံးသတ် ကောက်ချက် သို့မဟုတ် ရရှိသော သင်ခန်းစာ
     """
-    
-    # YouTube URL ကို Video URI အဖြစ် တိုက်ရိုက်ထည့်သွင်းခြင်း
-    video_part = types.Part.from_uri(
-        file_uri=youtube_url,
-        mime_type="video/*"
-    )
-
     response = ai_client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=[video_part, prompt]
+        model="gemini-2.0-flash",
+        contents=prompt
     )
     return response.text
 
@@ -80,4 +72,42 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(welcome_text)
 
 
-async def
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text
+    clean_url = extract_clean_youtube_url(user_message)
+
+    if not clean_url:
+        await update.message.reply_text("ကျေးဇူးပြု၍ မှန်ကန်သော YouTube Video Link တစ်ခု ပို့ပေးပါ။")
+        return
+
+    status_message = await update.message.reply_text("⏳ Gemini AI က ဗီဒီယိုကို လေ့လာပြီး မြန်မာလို Recap ရေးသားနေပါသည်... ခေတ္တစောင့်ပေးပါ။")
+
+    try:
+        recap_result = generate_recap_from_video(clean_url)
+        await status_message.edit_text(recap_result)
+    except Exception as e:
+        logging.error(f"Error generating recap: {e}")
+        await status_message.edit_text(f"⚠️ Recap ထုတ်ယူရာတွင် အမှားဖြစ်ပေါ်ခဲ့သည်- {str(e)[:100]}")
+
+
+async def main():
+    if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
+        raise ValueError("TELEGRAM_BOT_TOKEN နှင့် GEMINI_API_KEY လိုအပ်ပါသည်။")
+
+    web_thread = Thread(target=run_dummy_server, daemon=True)
+    web_thread.start()
+
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+
+    async with app:
+        await app.start()
+        await app.updater.start_polling()
+        while True:
+            await asyncio.sleep(3600)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+    
