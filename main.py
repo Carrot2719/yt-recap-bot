@@ -4,7 +4,7 @@ import asyncio
 import logging
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from google import genai
+import google.generativeai as genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
@@ -15,7 +15,8 @@ logging.basicConfig(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-ai_client = genai.Client(api_key=GEMINI_API_KEY)
+# Gemini API Setting
+genai.configure(api_key=GEMINI_API_KEY)
 
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -42,7 +43,7 @@ def extract_clean_youtube_url(text: str):
 
 def generate_recap_from_video(youtube_url: str):
     prompt = f"""
-    အောက်ပါ YouTube ဗီဒီယိုလင့်ခ်၏ အကြောင်းအရာကို လေ့လာပြီး မြန်မာဘာသာစကားဖြင့် ပြည့်စုံသပ်ရပ်သော Recap (အနှစ်ချုပ်) တစ်ခု ဖန်တီးပေးပါ။
+    အောက်ပါ YouTube ဗီဒီယိုလင့်ခ်၏ အကြောင်းအရာကို အခြေခံပြီး မြန်မာဘာသာစကားဖြင့် ပြည့်စုံသပ်ရပ်သော Recap (အနှစ်ချုပ်) တစ်ခု ဖန်တီးပေးပါ။
 
     YouTube URL: {youtube_url}
 
@@ -56,10 +57,8 @@ def generate_recap_from_video(youtube_url: str):
     🎯 **အဆုံးသတ် သုံးသပ်ချက် (Conclusion)**
     - အဆုံးသတ် ကောက်ချက် သို့မဟုတ် ရရှိသော သင်ခန်းစာ
     """
-    response = ai_client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=prompt
-    )
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    response = model.generate_content(prompt)
     return response.text
 
 
