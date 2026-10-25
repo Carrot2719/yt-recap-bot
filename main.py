@@ -5,7 +5,6 @@ import logging
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import genai
-from youtube_transcript_api import YouTubeTranscriptApi
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
@@ -32,54 +31,37 @@ def run_dummy_server():
     server.serve_forever()
 
 
-def extract_video_id(url: str):
+def extract_clean_youtube_url(text: str):
     pattern = r"(?:v=|\/|youtu\.be\/)([0-9A-Za-z_-]{11})"
-    match = re.search(pattern, url)
-    return match.group(1) if match else None
-
-
-def get_youtube_transcript(video_id: str):
-    """ဗီဒီယိုတွင်ပါသော မည်သည့်ဘာသာစကား Transcript ကိုမဆို အကုန်လုံးဆွဲယူသည်"""
-    try:
-        transcript_list_obj = YouTubeTranscriptApi.list_transcripts(video_id)
-        transcript = None
-        
-        # ရနိုင်သည့် မည်သည့် Transcript မဆို ရှာယူခြင်း
-        for t in transcript_list_obj:
-            transcript = t
-            break
-
-        if transcript:
-            fetched_data = transcript.fetch()
-            return " ".join([item["text"] for item in fetched_data])
-    except Exception as e:
-        logging.error(f"Transcript Error: {e}")
-        return None
+    match = re.search(pattern, text)
+    if match:
+        video_id = match.group(1)
+        return f"https://www.youtube.com/watch?v={video_id}"
     return None
 
 
-def generate_burmese_recap(transcript_text: str):
+def generate_burmese_recap(youtube_url: str):
     prompt = f"""
-    အောက်ပါ YouTube transcript စာသားများကို အခြေခံပြီး မြန်မာဘာသာစကားဖြင့် သပ်ရပ်ရှင်းလင်းသော Recap/Summary တစ်ခု ဖန်တီးပေးပါ။ (မူရင်းစာသားသည် မည်သည့်ဘာသာစကားဖြစ်စေ မြန်မာလို အနှစ်ချုပ် ပြန်ထုတ်ပေးပါ)
+    အောက်ပါ YouTube ဗီဒီယိုလင့်ခ် (သို့မဟုတ် ရုပ်ရှင်အနှစ်ချုပ် ဗီဒီယို) ၏ အကြောင်းအရာနှင့် အဓိက ဇာတ်လမ်းကို ရှာဖွေလေ့လာပြီး မြန်မာဘာသာစကားဖြင့် ပြည့်စုံသပ်ရပ်သော Recap (အနှစ်ချုပ်) တစ်ခု ဖန်တီးပေးပါ။
+
+    YouTube Link: {youtube_url}
 
     ဖွဲ့စည်းပုံ-
     📌 **ဗီဒီယို၏ အဓိကရည်ရွယ်ချက် (Overview)**
-    - ဗီဒီယိုအကြောင်း အကျဉ်းချုပ် ရှင်းလင်းချက် (၂-၃ ကြောင်း)
+    - ဗီဒီယို သို့မဟုတ် ဇာတ်ကားအကြောင်း အကျဉ်းချုပ် ရှင်းလင်းချက် (၂-၃ ကြောင်း)
 
-    💡 **အရေးကြီးသော အချက်အလက်များ (Key Takeaways)**
-    - အဓိက ဇာတ်လမ်း သို့မဟုတ် အရေးကြီးသော အချက်များကို အစီအစဉ်တကျ Bullet points များဖြင့် ဖော်ပြရန်
+    💡 **အရေးကြီးသော အချက်အလက်များ (Key Takeaways / Plot Summary)**
+    - အဓိက ဇာတ်လမ်းအစအဆုံး သို့မဟုတ် အရေးကြီးသော အချက်များကို အစီအစဉ်တကျ Bullet points များဖြင့် ဖော်ပြရန်
 
     🎯 **အဆုံးသတ် သုံးသပ်ချက် (Conclusion)**
     - အဆုံးသတ် ကောက်ချက် သို့မဟုတ် ရရှိသော သင်ခန်းစာ
-
-    Transcript:
-    {transcript_text[:25000]}
     """
     
-    # gemini-2.5-flash မော်ဒယ်အသစ်ဖြင့် အနှစ်ချုပ်ခိုင်းခြင်း
+    # Google Search Tool ပါဝင်သောကြောင့် ဗီဒီယိုအချက်အလက်များကို အလိုအလျောက် ရှာဖွေဖတ်ရှုပေးနိုင်သည်
     response = ai_client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=prompt
+        contents=prompt,
+        config={"tools": [{"google_search": {}}]}
     )
     return response.text
 
@@ -95,30 +77,20 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
-    video_id = extract_video_id(user_message)
+    clean_url = extract_clean_youtube_url(user_message)
 
-    if not video_id:
+    if not clean_url:
         await update.message.reply_text("ကျေးဇူးပြု၍ မှန်ကန်သော YouTube Video Link တစ်ခု ပို့ပေးပါ။")
         return
 
-    status_message = await update.message.reply_text("⏳ ဗီဒီယိုအချက်အလက်များကို ရယူနေပါသည်... ခေတ္တစောင့်ပေးပါ။")
-
-    transcript_text = get_youtube_transcript(video_id)
-
-    if not transcript_text:
-        await status_message.edit_text(
-            "⚠️ ဒီဗီဒီယိုအတွက် Subtitle/Transcript ရယူ၍ မရနိုင်ပါ (စာတန်းထိုး မပါဝင်ပါ သို့မဟုတ် ပိတ်ထားပါသည်)။"
-        )
-        return
-
-    await status_message.edit_text("✍️ Gemini AI က မြန်မာလို Recap ရေးသားနေပါသည်... ခေတ္တစောင့်ပေးပါ။")
+    status_message = await update.message.reply_text("⏳ ဗီဒီယိုအကြောင်းအရာကို ရှာဖွေပြီး မြန်မာလို Recap ရေးသားနေပါသည်... ခေတ္တစောင့်ပေးပါ။")
 
     try:
-        recap_result = generate_burmese_recap(transcript_text)
+        recap_result = generate_burmese_recap(clean_url)
         await status_message.edit_text(recap_result)
     except Exception as e:
         logging.error(f"Error generating recap: {e}")
-        await status_message.edit_text(f"⚠️ Recap ထုတ်ယူရာတွင် အမှားဖြစ်ပေါ်ခဲ့သည်- {str(e)[:100]}")
+        await status_message.edit_text(f"⚠️ အနှစ်ချုပ်ရာတွင် အမှားဖြစ်ပေါ်ခဲ့သည်- {str(e)[:100]}")
 
 
 async def main():
