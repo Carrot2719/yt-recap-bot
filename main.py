@@ -19,7 +19,6 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 
-# Web Service အခမဲ့ရစေရန် Dummy Web Server
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -39,23 +38,34 @@ def extract_video_id(url: str):
 
 
 def get_youtube_transcript(video_id: str):
+    """မည်သည့်ဘာသာစကားဖြင့်မဆို ပါရှိသော Subtitle အားလုံးကို ဆွဲထုတ်ပေးသည်"""
     try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(
-            video_id, languages=["en", "my", "en-US", "en-GB"]
-        )
-        return " ".join([item["text"] for item in transcript_list])
-    except Exception:
+        transcript_list_obj = YouTubeTranscriptApi.list_transcripts(video_id)
+        
+        # ၁။ ဗီဒီယိုတွင် ပါဝင်သော မည်သည့် transcript မဆို (ဘာသာစကား မရွေး) ရှာယူခြင်း
+        transcript = None
         try:
-            transcript_list_obj = YouTubeTranscriptApi.list_transcripts(video_id)
-            transcript = transcript_list_obj.find_transcript(["en"])
-            return " ".join([item["text"] for item in transcript.fetch()])
+            # ဦးစားပေးအနေဖြင့် English သို့မဟုတ် Auto-generated ကို အရင်ရှာသည်
+            transcript = transcript_list_obj.find_transcript(['en', 'zh-Hans', 'zh-Hant', 'zh', 'my', 'th'])
         except Exception:
-            return None
+            # မတွေ့ပါက ဗီဒီယိုထဲတွင် ပထမဆုံးတွေ့ရသော ရနိုင်သည့် ဘာသာစကားတစ်ခုခုကို ယူသည်
+            for t in transcript_list_obj:
+                transcript = t
+                break
+        
+        if transcript:
+            fetched_data = transcript.fetch()
+            return " ".join([item["text"] for item in fetched_data])
+            
+    except Exception as e:
+        logging.error(f"Transcript Error: {e}")
+        return None
+    return None
 
 
 def generate_burmese_recap(transcript_text: str):
     prompt = f"""
-    အောက်ပါ YouTube transcript ကို အခြေခံပြီး မြန်မာဘာသာစကားဖြင့် သပ်ရပ်ရှင်းလင်းသော Recap/Summary တစ်ခု ဖန်တီးပေးပါ။
+    အောက်ပါ YouTube transcript ကို အခြေခံပြီး မြန်မာဘာသာစကားဖြင့် သပ်ရပ်ရှင်းလင်းသော Recap/Summary တစ်ခု ဖန်တီးပေးပါ။ (မူရင်းစာသားသည် မည်သည့်ဘာသာစကားဖြစ်စေ မြန်မာလို အနှစ်ချုပ် ပြန်ပေးပါ)
 
     ဖွဲ့စည်းပုံ-
     📌 **ဗီဒီယို၏ အဓိကရည်ရွယ်ချက် (Overview)**
@@ -68,7 +78,7 @@ def generate_burmese_recap(transcript_text: str):
     - အဓိက သင်ခန်းစာ သို့မဟုတ် ကောက်ချက်
 
     Transcript:
-    {transcript_text[:20000]}
+    {transcript_text[:30000]}
     """
     response = ai_client.models.generate_content(
         model="gemini-2.5-flash",
@@ -100,7 +110,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not transcript_text:
         await status_message.edit_text(
-            "⚠️ ဒီဗီဒီယိုအတွက် Subtitle/Transcript မတွေ့ရှိပါ သို့မဟုတ် ပိတ်ထားပါသည်။"
+            "⚠️ ဒီဗီဒီယိုအတွက် Subtitle/Transcript ရယူ၍ မရနိုင်ပါ သို့မဟုတ် ပိတ်ထားပါသည်။"
         )
         return
 
@@ -109,7 +119,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         recap_result = generate_burmese_recap(transcript_text)
         await status_message.edit_text(recap_result)
-    except Exception:
+    except Exception as e:
         await status_message.edit_text("⚠️ Recap ထုတ်ယူရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။ နောက်တစ်ကြိမ် ထပ်ကြိုးစားပေးပါ။")
 
 
@@ -117,20 +127,16 @@ async def main():
     if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
         raise ValueError("TELEGRAM_BOT_TOKEN နှင့် GEMINI_API_KEY လိုအပ်ပါသည်။")
 
-    # Dummy Web Server ကို Background Thread ဖြင့် run ခြင်း
     web_thread = Thread(target=run_dummy_server, daemon=True)
     web_thread.start()
 
-    # Telegram Bot တည်ဆောက်ခြင်း
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-    # Event Loop အတွင်း ပုံမှန် polling စနစ်ဖြင့် စတင်ခြင်း
     async with app:
         await app.start()
         await app.updater.start_polling()
-        # Bot ကို အမြဲတစေ active ဖြစ်နေစေရန် စောင့်ဆိုင်းထားခြင်း
         while True:
             await asyncio.sleep(3600)
 
