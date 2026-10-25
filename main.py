@@ -5,6 +5,7 @@ import logging
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import genai
+from google.genai import types
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
@@ -42,13 +43,13 @@ def extract_clean_youtube_url(text: str):
 
 
 def generate_recap_from_video(youtube_url: str):
-    """Gemini မော်ဒယ်ဆီသို့ YouTube Link ကို တိုက်ရိုက်ပေးပို့၍ မြန်မာလို အနှစ်ချုပ်ခိုင်းခြင်း"""
+    """Gemini API သို့ YouTube Video ကို URI အဖြစ် တိုက်ရိုက်ပေးပို့၍ မြန်မာလို အနှစ်ချုပ်ခိုင်းခြင်း"""
     prompt = """
     ဤ YouTube ဗီဒီယို၏ အသံနှင့် အကြောင်းအရာ အပြည့်အစုံကို နားထောင်/လေ့လာပြီး မြန်မာဘာသာစကားဖြင့် ပြည့်စုံသပ်ရပ်သော Recap (အနှစ်ချုပ်) တစ်ခု ဖန်တီးပေးပါ။
 
     ဖွဲ့စည်းပုံ-
     📌 **ဗီဒီယို၏ အဓိကရည်ရွယ်ချက် (Overview)**
-    - ဗီဒီယိုအကြောင်း အကျဉ်းချုပ် ရှင်းလင်းချက်
+    - ဗီဒီယိုအကြောင်း အကျဉ်းချုပ် ရှင်းလင်းချက် (၂-၃ ကြောင်း)
 
     💡 **အရေးကြီးသော အချက်အလက်များ (Key Takeaways)**
     - အဓိက ဇာတ်လမ်း သို့မဟုတ် အရေးကြီးသော အချက်များကို အစီအစဉ်တကျ Bullet points များဖြင့် ဖော်ပြရန်
@@ -57,13 +58,15 @@ def generate_recap_from_video(youtube_url: str):
     - အဆုံးသတ် ကောက်ချက် သို့မဟုတ် ရရှိသော သင်ခန်းစာ
     """
     
-    # Gemini 2.5 Flash သည် YouTube URL ကို တိုက်ရိုက် လက်ခံဖတ်ရှုနိုင်သည်
+    # Gemini 2.5 Flash သည် YouTube URL ကို Part.from_uri ဖြင့် တိုက်ရိုက် ဖတ်ရှုနိုင်သည်
+    video_part = types.Part.from_uri(
+        file_uri=youtube_url,
+        mime_type="video/*"
+    )
+
     response = ai_client.models.generate_content(
         model="gemini-2.5-flash",
-        contents=[
-            {"text": prompt},
-            {"text": f"YouTube Video URL: {youtube_url}"}
-        ]
+        contents=[video_part, prompt]
     )
     return response.text
 
@@ -92,7 +95,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_message.edit_text(recap_result)
     except Exception as e:
         logging.error(f"Error generating recap: {e}")
-        await status_message.edit_text("⚠️ ဗီဒီယိုကို အနှစ်ချုပ်ရာတွင် အမှားအယွင်း ဖြစ်ပေါ်ခဲ့ပါသည်။ နောက်တစ်ကြိမ် ပြန်လည်စမ်းသပ်ပေးပါ။")
+        await status_message.edit_text(f"⚠️ Recap ထုတ်ယူရာတွင် အမှားဖြစ်ပေါ်ခဲ့သည်- {str(e)[:100]}")
 
 
 async def main():
@@ -115,4 +118,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
     
